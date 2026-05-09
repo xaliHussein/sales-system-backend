@@ -15,6 +15,7 @@ return new class () extends Migration {
             $table->uuid("user_id");
             $table->string('invoice_number')->unique();
             $table->decimal('total', 10, 2);
+            $table->integer('retrieve')->default(0);
             $table->timestamps();
         });
     }

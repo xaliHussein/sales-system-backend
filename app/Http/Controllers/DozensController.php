@@ -27,12 +27,18 @@ class DozensController extends Controller
 
     public function getDozen()
     {
-        $dozens = Dozens::where("user_id", auth()->user()->id)->with(['product', 'items']);
+        $dozens = Dozens::where("user_id", auth()->user()->id)->with(['product','items' => function ($q) {
+            $q->orderBy('index_count', 'asc');
+        }]);
 
         if (isset($_GET["query"])) {
             $query = $_GET["query"];
-            $dozens->where('barcode', '=', $query)->orWhereHas('product', function ($q) use ($query) {
-                $q->where('name', 'like', "%$query%");
+             $dozens->where(function ($q) use ($query) {
+                $q->where('barcode', '=', $query)
+                ->orWhere('model', 'like', "%$query%") // 🔹 البحث في حقل model
+                ->orWhereHas('product', function ($q2) use ($query) {
+                    $q2->where('name', 'like', "%$query%");
+                });
             });
         }
 
@@ -57,7 +63,7 @@ class DozensController extends Controller
             'type' => 'required|in:0,1',
             'total_pieces' => 'required|integer|between:1,30', // 10 pieces per dozen
             'color' => 'required|string|max:50',
-            'purchase_price' => 'required|numeric|min:1000',
+            'purchase_price' => 'nullable|numeric|min:1000',
             'selling_price' => 'required|numeric|min:1000',
             'variants' => 'required|array',
             'variants.*.size' => 'required|string|max:3',
@@ -83,7 +89,6 @@ class DozensController extends Controller
             'purchase_price.min' => 'سعر الشراء يجب أن يكون أكبر من أو يساوي 1000',
             'selling_price.numeric' => 'سعر البيع يجب أن يكون رقماً',
             'selling_price.min' => 'سعر البيع يجب أن يكون أكبر من أو يساوي 1000',
-            'purchase_price.required' => 'يرجى ادخال سعر الشراء',
             'selling_price.required' => 'يرجى ادخال سعر البيع',
             'variants.required' => 'يرجى ادخال المقاسات',
             'variants.array' => 'المقاسات يجب أن تكون مصفوفة',
@@ -114,6 +119,7 @@ class DozensController extends Controller
             'total_pieces' => $requestData['total_pieces'],
             'purchase_price' => $requestData['purchase_price'],
             'selling_price' => $requestData['selling_price'],
+            'model' => $requestData['model'],
         ]);
 
 
@@ -125,6 +131,7 @@ class DozensController extends Controller
                 'size' => $variants['size'],
                 'quantity' => $variants['quantity'],
                 'status' => 'available',
+                'index_count' => $variants['index']
             ]);
         }
 
@@ -174,7 +181,7 @@ class DozensController extends Controller
             'type' => 'required|in:0,1',
             'total_pieces' => 'required|integer|between:1,30', // 10 pieces per dozen
             'color' => 'required|string|max:50',
-            'purchase_price' => 'required|numeric|min:1000',
+            'purchase_price' => 'nullable|numeric|min:1000',
             'selling_price' => 'required|numeric|min:1000',
             'variants' => 'required|array',
             'variants.*.size' => 'required|string|max:3',
@@ -203,7 +210,6 @@ class DozensController extends Controller
             'purchase_price.min' => 'سعر الشراء يجب أن يكون أكبر من أو يساوي 1000',
             'selling_price.numeric' => 'سعر البيع يجب أن يكون رقماً',
             'selling_price.min' => 'سعر البيع يجب أن يكون أكبر من أو يساوي 1000',
-            'purchase_price.required' => 'يرجى ادخال سعر الشراء',
             'selling_price.required' => 'يرجى ادخال سعر البيع',
             'variants.required' => 'يرجى ادخال المقاسات',
             'variants.array' => 'المقاسات يجب أن تكون مصفوفة',
@@ -233,6 +239,7 @@ class DozensController extends Controller
             'purchase_price' => $requestData['purchase_price'],
             'selling_price' => $requestData['selling_price'],
             'total_pieces' => $requestData['total_pieces'],
+            'model' => $requestData['model'],
         ]);
 
         $old_items = Items::where('product_id', $product->id)->where('dozen_id', $dozen->id)->get();
@@ -243,13 +250,17 @@ class DozensController extends Controller
         foreach ($new_items as $item) {
             if (!empty($item['id'])) {
                 // Update existing item
-                $existing = Items::find($item['id']);
+               $existing = Items::find($item['id']);
                 if ($existing) {
+
+                    $status = $item['quantity'] >= 1 ? 'available' : 'sold_out';
+
                     $existing->update([
-                        'size' => $item['size'],
+                        'size'     => $item['size'],
                         'quantity' => $item['quantity'],
-                        'status' => $item['status'],
+                        'status'   => $status,
                     ]);
+
                     $processed_ids[] = $existing->id;
                 }
             } else {
@@ -260,6 +271,7 @@ class DozensController extends Controller
                     'dozen_id' => $dozen->id,
                     'size' => $item['size'],
                     'quantity' => $item['quantity'],
+                    'index_count' => $item['index'],
                 ]);
                 $processed_ids[] = $created->id;
             }
@@ -277,12 +289,27 @@ class DozensController extends Controller
 
     public function getProductsByBarcode()
     {
-        if($_GET['query'] != null || $_GET['query'] != "") {
-            $dozen = Dozens::where("user_id", auth()->user()->id)->where('barcode', $_GET['query'])->with(['product', 'items'])->first();;
+        if ($_GET['query'] != null || $_GET['query'] != "") {
+            $dozen = Dozens::where("user_id", auth()->user()->id)->where('barcode', $_GET['query'])->with(['product', 'items'])->first();
+            ;
         } else {
             return $this->send_response(400, "الباركود مطلوب", [], []);
         }
 
         return $this->send_response(200, "تم العثور على المنتج بنجاح", [], $dozen);
+    }
+
+
+    public function checkBarcode(Request $request)
+    {
+        $barcode = $request->query('barcode');
+
+        if (!$barcode) {
+            return $this->send_response(400, "الباركود مطلوب", [], []);
+        }
+
+        $exists = Dozens::where('barcode', $barcode)->exists();
+
+        return $this->send_response(200, "تم الفحص", [], ['exists' => $exists]);
     }
 }

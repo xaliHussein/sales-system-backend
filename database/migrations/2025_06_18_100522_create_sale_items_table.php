@@ -17,6 +17,11 @@ return new class () extends Migration {
             $table->uuid("item_id");
             $table->decimal('price', 10, 2);
             $table->integer('quantity');
+            $table->string('product_name');
+            $table->string('color');
+            $table->string('size');
+            $table->string('barcode');
+            $table->integer('returned_quantity')->default(0);
             $table->timestamps();
         });
     }
